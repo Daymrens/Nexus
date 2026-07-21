@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, oneshot};
@@ -469,6 +470,144 @@ async fn chat_send(
     ai::stream_chat(request, app, conversation_id).await
 }
 
+// ── Terminal ──
+
+struct TermSession {
+    child: Child,
+    stdin: Option<tokio::process::ChildStdin>,
+}
+
+pub struct TermManager {
+    sessions: Arc<Mutex<HashMap<String, TermSession>>>,
+}
+
+impl TermManager {
+    fn new() -> Self {
+        Self {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+#[tauri::command]
+async fn term_spawn(
+    id: String,
+    cwd: Option<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, TermManager>,
+) -> Result<(), String> {
+    let shell = if cfg!(windows) {
+        "powershell.exe"
+    } else {
+        "bash"
+    };
+    let shell_args = if cfg!(windows) {
+        vec!["-NoLogo", "-NoProfile"]
+    } else {
+        vec![]
+    };
+
+    let mut cmd = Command::new(shell);
+    cmd.args(&shell_args);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.stdin(std::process::Stdio::piped());
+
+    if let Some(ref dir) = cwd {
+        cmd.current_dir(dir);
+    }
+
+    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn shell: {}", e))?;
+
+    let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+
+    let mut sessions = state.sessions.lock().await;
+    sessions.insert(
+        id.clone(),
+        TermSession {
+            child,
+            stdin: Some(stdin),
+        },
+    );
+    drop(sessions);
+
+    // Stream stdout
+    let id_clone = id.clone();
+    let app_out = app.clone();
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout);
+        let mut buf = [0u8; 8192];
+        loop {
+            match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let data = buf[..n].to_vec();
+                    let _ = app_out.emit(
+                        "term://output",
+                        serde_json::json!({ "id": id_clone, "data": data }),
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Stream stderr
+    let id_clone = id.clone();
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut buf = [0u8; 8192];
+        loop {
+            match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let data = buf[..n].to_vec();
+                    let _ = app.emit(
+                        "term://output",
+                        serde_json::json!({ "id": id_clone, "data": data }),
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn term_write(
+    id: String,
+    data: String,
+    state: tauri::State<'_, TermManager>,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().await;
+    let session = sessions
+        .get_mut(&id)
+        .ok_or_else(|| format!("Terminal {} not found", id))?;
+    let stdin = session.stdin.as_mut().ok_or("Terminal stdin closed")?;
+    stdin
+        .write_all(data.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    stdin.flush().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn term_kill(
+    id: String,
+    state: tauri::State<'_, TermManager>,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().await;
+    if let Some(mut session) = sessions.remove(&id) {
+        let _ = session.child.kill().await;
+    }
+    Ok(())
+}
+
 // ── App Setup ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -476,6 +615,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(McpManager::new())
+        .manage(TermManager::new())
         .invoke_handler(tauri::generate_handler![
             mcp_add_server,
             mcp_remove_server,
@@ -488,6 +628,9 @@ pub fn run() {
             write_file,
             list_directory,
             chat_send,
+            term_spawn,
+            term_write,
+            term_kill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nexus");
