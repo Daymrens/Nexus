@@ -2,11 +2,12 @@ import { Sidebar } from "./components/layout/Sidebar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { ChatView } from "./components/chat/ChatView";
 import { McpView } from "./components/mcp/McpView";
+import { EditorView } from "./components/editor/EditorView";
 import { useAppStore } from "./stores/appStore";
 
 const views: Record<string, React.FC> = {
   chat: ChatView,
-  editor: () => <div className="p-4 text-nexus-text-muted">Editor — coming soon</div>,
+  editor: EditorView,
   terminal: () => <div className="p-4 text-nexus-text-muted">Terminal — coming soon</div>,
   mcp: McpView,
   agents: () => <div className="p-4 text-nexus-text-muted">Agent Dashboard — coming soon</div>,
