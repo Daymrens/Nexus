@@ -3,35 +3,46 @@ import { Plus, Play, Square, Trash2, ChevronDown, ChevronRight } from "lucide-re
 import { useMcpStore, type McpServer } from "../../stores/mcpStore";
 
 export function McpView() {
-  const { servers, addServer, removeServer, setServerStatus } = useMcpStore();
+  const { servers, addServer, removeServer, startServer, stopServer } = useMcpStore();
   const [showAddForm, setShowAddForm] = useState(false);
   const [expandedServer, setExpandedServer] = useState<string | null>(null);
   const [newServer, setNewServer] = useState({
     name: "",
     command: "",
-    transport: "stdio" as "stdio" | "http" | "sse",
-    url: "",
   });
+  const [loading, setLoading] = useState<string | null>(null);
 
-  const handleAdd = () => {
-    if (!newServer.name) return;
-    const cmd = newServer.command.split(" ").filter(Boolean);
-    addServer({
+  const handleAdd = async () => {
+    if (!newServer.name || !newServer.command) return;
+    await addServer({
       name: newServer.name,
-      command: cmd,
+      command: newServer.command.split(" ").filter(Boolean),
       env: {},
-      transport: newServer.transport,
-      url: newServer.url || undefined,
+      transport: "stdio",
     });
-    setNewServer({ name: "", command: "", transport: "stdio", url: "" });
+    setNewServer({ name: "", command: "" });
     setShowAddForm(false);
   };
 
-  const toggleServer = (server: McpServer) => {
-    if (server.status === "running") {
-      setServerStatus(server.id, "stopped");
-    } else {
-      setServerStatus(server.id, "running");
+  const handleToggle = async (server: McpServer) => {
+    setLoading(server.id);
+    try {
+      if (server.status === "running") {
+        await stopServer(server.id);
+      } else {
+        await startServer(server.id);
+      }
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleRemove = async (id: string) => {
+    setLoading(id);
+    try {
+      await removeServer(id);
+    } finally {
+      setLoading(null);
     }
   };
 
@@ -49,7 +60,6 @@ export function McpView() {
           </button>
         </div>
 
-        {/* Add form */}
         {showAddForm && (
           <div className="p-3 border-b border-nexus-border space-y-2">
             <input
@@ -61,7 +71,7 @@ export function McpView() {
             <input
               value={newServer.command}
               onChange={(e) => setNewServer({ ...newServer, command: e.target.value })}
-              placeholder="Command (e.g. npx -y ruflo@latest mcp start)"
+              placeholder="Command (e.g. npx -y @upstash/context7-mcp)"
               className="input"
             />
             <div className="flex gap-2">
@@ -78,7 +88,6 @@ export function McpView() {
           </div>
         )}
 
-        {/* Server list */}
         <div className="flex-1 overflow-auto p-2 space-y-1">
           {servers.length === 0 && !showAddForm && (
             <p className="text-xs text-nexus-text-muted p-3 text-center">
@@ -115,17 +124,23 @@ export function McpView() {
 
               {expandedServer === server.id && (
                 <div className="px-3 pb-3 space-y-2 border-t border-nexus-border pt-2">
-                  <div className="text-xs text-nexus-text-muted">
-                    Command: {server.command.join(" ")}
+                  <div className="text-xs text-nexus-text-muted font-mono break-all">
+                    {server.command.join(" ")}
                   </div>
+                  {server.error && (
+                    <div className="text-xs text-red-400">{server.error}</div>
+                  )}
                   <div className="flex gap-2">
                     <button
-                      onClick={() => toggleServer(server)}
+                      onClick={() => handleToggle(server)}
+                      disabled={loading === server.id}
                       className={`btn-primary text-xs flex items-center gap-1 ${
                         server.status === "running" ? "bg-red-600 hover:bg-red-700" : ""
                       }`}
                     >
-                      {server.status === "running" ? (
+                      {loading === server.id ? (
+                        <span className="animate-pulse">...</span>
+                      ) : server.status === "running" ? (
                         <>
                           <Square size={12} /> Stop
                         </>
@@ -136,7 +151,8 @@ export function McpView() {
                       )}
                     </button>
                     <button
-                      onClick={() => removeServer(server.id)}
+                      onClick={() => handleRemove(server.id)}
+                      disabled={loading === server.id}
                       className="btn-secondary text-xs flex items-center gap-1 text-red-400"
                     >
                       <Trash2 size={12} /> Remove
@@ -150,7 +166,7 @@ export function McpView() {
       </div>
 
       {/* Tool explorer */}
-      <div className="flex-1 p-4">
+      <div className="flex-1 p-4 overflow-auto">
         <h3 className="text-sm font-semibold mb-4">Tool Explorer</h3>
         {servers.length === 0 ? (
           <p className="text-sm text-nexus-text-muted">
@@ -159,18 +175,24 @@ export function McpView() {
         ) : (
           <div className="space-y-3">
             {servers.map((server) =>
-              server.tools.map((tool) => (
-                <div
-                  key={`${server.id}-${tool.name}`}
-                  className="panel p-3"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium">{tool.name}</span>
-                    <span className="text-xs text-nexus-text-muted">from {server.name}</span>
+              server.tools.length > 0 ? (
+                server.tools.map((tool) => (
+                  <div
+                    key={`${server.id}-${tool.name}`}
+                    className="panel p-3"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-medium">{tool.name}</span>
+                      <span className="text-xs text-nexus-text-muted">from {server.name}</span>
+                    </div>
+                    <p className="text-xs text-nexus-text-muted">{tool.description}</p>
                   </div>
-                  <p className="text-xs text-nexus-text-muted">{tool.description}</p>
+                ))
+              ) : (
+                <div key={server.id} className="panel p-3 text-xs text-nexus-text-muted">
+                  {server.name}: {server.status === "running" ? "No tools discovered" : "Start server to see tools"}
                 </div>
-              ))
+              )
             )}
           </div>
         )}
