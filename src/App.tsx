@@ -6,6 +6,7 @@ import { EditorView } from "./components/editor/EditorView";
 import { TerminalView } from "./components/terminal/TerminalView";
 import { AgentsView } from "./components/agents/AgentsView";
 import { MemoryView } from "./components/memory/MemoryView";
+import { PluginsView } from "./components/plugins/PluginsView";
 import { useAppStore } from "./stores/appStore";
 
 const views: Record<string, React.FC> = {
@@ -15,7 +16,7 @@ const views: Record<string, React.FC> = {
   mcp: McpView,
   agents: AgentsView,
   memory: MemoryView,
-  plugins: () => <div className="p-4 text-nexus-text-muted">Plugin Marketplace — coming soon</div>,
+  plugins: PluginsView,
   settings: () => <div className="p-4 text-nexus-text-muted">Settings — coming soon</div>,
 };
 

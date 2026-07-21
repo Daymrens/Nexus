@@ -980,6 +980,214 @@ fn chrono_free_now() -> String {
         .to_string()
 }
 
+// ── Plugin Marketplace ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Plugin {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub author: String,
+    pub category: String,
+    pub enabled: bool,
+    pub installed: bool,
+    #[serde(default)]
+    pub config: HashMap<String, String>,
+    pub downloaded_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginRegistryEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub author: String,
+    pub category: String,
+    pub downloads: u64,
+    pub rating: f64,
+}
+
+fn plugins_path() -> std::path::PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("nexus_plugins.json")
+}
+
+fn load_installed_plugins() -> Vec<Plugin> {
+    let path = plugins_path();
+    if !path.exists() {
+        return Vec::new();
+    }
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_installed_plugins(plugins: &[Plugin]) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(plugins).map_err(|e| e.to_string())?;
+    std::fs::write(&plugins_path(), json).map_err(|e| e.to_string())
+}
+
+fn builtin_registry() -> Vec<PluginRegistryEntry> {
+    vec![
+        PluginRegistryEntry {
+            id: "ruflo-core".into(),
+            name: "Ruflo Core".into(),
+            description: "Core Ruflo agent framework — provides multi-agent orchestration, tool routing, and memory".into(),
+            version: "1.2.0".into(),
+            author: "Ruflo".into(),
+            category: "agents".into(),
+            downloads: 12400,
+            rating: 4.8,
+        },
+        PluginRegistryEntry {
+            id: "ruflo-memory".into(),
+            name: "Ruflo Memory".into(),
+            description: "Persistent semantic memory with vector search for Ruflo agents".into(),
+            version: "0.9.3".into(),
+            author: "Ruflo".into(),
+            category: "memory".into(),
+            downloads: 8200,
+            rating: 4.6,
+        },
+        PluginRegistryEntry {
+            id: "ruflo-tools".into(),
+            name: "Ruflo Tool Pack".into(),
+            description: "Extended tool collection — web search, file operations, shell commands, API calls".into(),
+            version: "1.0.1".into(),
+            author: "Ruflo".into(),
+            category: "tools".into(),
+            downloads: 9600,
+            rating: 4.7,
+        },
+        PluginRegistryEntry {
+            id: "github-integration".into(),
+            name: "GitHub Integration".into(),
+            description: "Git operations, PR management, issue tracking directly from the IDE".into(),
+            version: "0.8.0".into(),
+            author: "Nexus".into(),
+            category: "integrations".into(),
+            downloads: 6100,
+            rating: 4.3,
+        },
+        PluginRegistryEntry {
+            id: "docker-support".into(),
+            name: "Docker Support".into(),
+            description: "Container management, compose files, Dockerfile generation".into(),
+            version: "0.7.2".into(),
+            author: "Nexus".into(),
+            category: "tools".into(),
+            downloads: 4300,
+            rating: 4.1,
+        },
+        PluginRegistryEntry {
+            id: "code-review".into(),
+            name: "AI Code Review".into(),
+            description: "Automated code review with suggestions for improvements, bugs, and security issues".into(),
+            version: "1.1.0".into(),
+            author: "Nexus".into(),
+            category: "ai".into(),
+            downloads: 7800,
+            rating: 4.5,
+        },
+        PluginRegistryEntry {
+            id: "test-runner".into(),
+            name: "Test Runner".into(),
+            description: "Run and monitor tests across Jest, Vitest, pytest, cargo test, and more".into(),
+            version: "0.6.0".into(),
+            author: "Nexus".into(),
+            category: "tools".into(),
+            downloads: 5400,
+            rating: 4.2,
+        },
+        PluginRegistryEntry {
+            id: "db-explorer".into(),
+            name: "Database Explorer".into(),
+            description: "Browse and query SQLite, PostgreSQL, MySQL databases from the IDE".into(),
+            version: "0.5.0".into(),
+            author: "Nexus".into(),
+            category: "tools".into(),
+            downloads: 3200,
+            rating: 4.0,
+        },
+    ]
+}
+
+#[tauri::command]
+async fn plugin_registry() -> Result<Vec<PluginRegistryEntry>, String> {
+    Ok(builtin_registry())
+}
+
+#[tauri::command]
+async fn plugin_list() -> Result<Vec<Plugin>, String> {
+    Ok(load_installed_plugins())
+}
+
+#[tauri::command]
+async fn plugin_install(id: String) -> Result<Plugin, String> {
+    let mut plugins = load_installed_plugins();
+    if plugins.iter().any(|p| p.id == id) {
+        return Err(format!("Plugin {} already installed", id));
+    }
+    let registry = builtin_registry();
+    let entry = registry
+        .iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| format!("Plugin {} not found in registry", id))?;
+    let plugin = Plugin {
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        description: entry.description.clone(),
+        version: entry.version.clone(),
+        author: entry.author.clone(),
+        category: entry.category.clone(),
+        enabled: true,
+        installed: true,
+        config: HashMap::new(),
+        downloaded_at: Some(chrono_free_now()),
+    };
+    plugins.push(plugin.clone());
+    save_installed_plugins(&plugins)?;
+    Ok(plugin)
+}
+
+#[tauri::command]
+async fn plugin_uninstall(id: String) -> Result<(), String> {
+    let mut plugins = load_installed_plugins();
+    plugins.retain(|p| p.id != id);
+    save_installed_plugins(&plugins)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn plugin_toggle(id: String, enabled: bool) -> Result<Plugin, String> {
+    let mut plugins = load_installed_plugins();
+    let plugin = plugins
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| format!("Plugin {} not found", id))?;
+    plugin.enabled = enabled;
+    let result = plugin.clone();
+    save_installed_plugins(&plugins)?;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn plugin_update_config(id: String, config: HashMap<String, String>) -> Result<Plugin, String> {
+    let mut plugins = load_installed_plugins();
+    let plugin = plugins
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| format!("Plugin {} not found", id))?;
+    plugin.config = config;
+    let result = plugin.clone();
+    save_installed_plugins(&plugins)?;
+    Ok(result)
+}
+
 // ── App Setup ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1014,6 +1222,12 @@ pub fn run() {
             memory_update,
             memory_delete,
             memory_stats,
+            plugin_registry,
+            plugin_list,
+            plugin_install,
+            plugin_uninstall,
+            plugin_toggle,
+            plugin_update_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nexus");
