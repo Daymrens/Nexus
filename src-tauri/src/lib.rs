@@ -1,3 +1,5 @@
+mod ai;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -456,6 +458,17 @@ async fn list_directory(path: String) -> Result<Vec<String>, String> {
     Ok(result)
 }
 
+// ── Chat Commands ──
+
+#[tauri::command]
+async fn chat_send(
+    request: ai::ChatRequest,
+    conversation_id: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    ai::stream_chat(request, app, conversation_id).await
+}
+
 // ── App Setup ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -474,6 +487,7 @@ pub fn run() {
             read_file,
             write_file,
             list_directory,
+            chat_send,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nexus");

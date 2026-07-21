@@ -1,150 +1,156 @@
-import { useState, useRef, useEffect } from "react";
-import { Send, Plus } from "lucide-react";
-import { useChatStore } from "../../stores/chatStore";
+import { useState } from "react";
+import {
+  ChevronDown,
+  Trash2,
+  Square,
+} from "lucide-react";
+import { useChatStore, type ProviderConfig, type ProviderType } from "../../stores/chatStore";
+import { MessageList } from "./MessageList";
+import { MessageInput } from "./MessageInput";
+import { ModelSelector } from "./ModelSelector";
+
+const DEFAULT_PROVIDERS: Record<ProviderType, ProviderConfig> = {
+  anthropic: {
+    type: "anthropic",
+    apiKey: "",
+    model: "claude-sonnet-4-20250514",
+  },
+  openai: {
+    type: "openai",
+    apiKey: "",
+    model: "gpt-4o",
+  },
+  ollama: {
+    type: "ollama",
+    apiKey: "ollama",
+    model: "llama3.2",
+    baseUrl: "http://localhost:11434/v1",
+  },
+};
 
 export function ChatView() {
   const {
     conversations,
-    activeConversation,
-    streaming,
+    activeConversationId,
+    isStreaming,
     createConversation,
+    deleteConversation,
     setActiveConversation,
     sendMessage,
+    stopStreaming,
+    updateProvider,
   } = useChatStore();
-  const [input, setInput] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const activeConv = conversations.find((c) => c.id === activeConversation);
+  const [showModelSelector, setShowModelSelector] = useState(false);
+  const activeConv = conversations.find((c) => c.id === activeConversationId);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeConv?.messages]);
-
-  const handleSend = () => {
-    if (!input.trim() || streaming) return;
-    if (!activeConversation) {
-      createConversation("claude-sonnet-4-20250514");
-    }
-    sendMessage(input.trim());
-    setInput("");
+  const handleNewChat = () => {
+    createConversation(DEFAULT_PROVIDERS.anthropic);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  const handleSend = (content: string) => {
+    if (!activeConversationId) {
+      const id = createConversation(DEFAULT_PROVIDERS.anthropic);
+      setTimeout(() => sendMessage(id, content), 50);
+    } else {
+      sendMessage(activeConversationId, content);
     }
   };
 
   return (
     <div className="flex h-full">
-      {/* Conversation list */}
+      {/* Conversation sidebar */}
       <div className="w-56 border-r border-nexus-border bg-nexus-surface flex flex-col">
         <div className="p-2 border-b border-nexus-border">
-          <button
-            onClick={() => createConversation("claude-sonnet-4-20250514")}
-            className="btn-primary w-full flex items-center justify-center gap-2"
-          >
-            <Plus size={14} />
-            New Chat
+          <button onClick={handleNewChat} className="btn-primary w-full text-sm">
+            + New Chat
           </button>
         </div>
-        <div className="flex-1 overflow-auto p-2 space-y-1">
+        <div className="flex-1 overflow-auto p-2 space-y-0.5">
           {conversations.map((conv) => (
-            <button
-              key={conv.id}
-              onClick={() => setActiveConversation(conv.id)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm truncate transition-colors ${
-                activeConversation === conv.id
-                  ? "bg-nexus-accent/10 text-nexus-accent"
-                  : "text-nexus-text-muted hover:bg-nexus-bg"
-              }`}
-            >
-              {conv.title}
-            </button>
+            <div key={conv.id} className="group flex items-center">
+              <button
+                onClick={() => setActiveConversation(conv.id)}
+                className={`flex-1 text-left px-2 py-1.5 rounded text-xs truncate transition-colors ${
+                  activeConversationId === conv.id
+                    ? "bg-nexus-accent/10 text-nexus-accent"
+                    : "text-nexus-text-muted hover:bg-nexus-bg"
+                }`}
+              >
+                {conv.title}
+              </button>
+              <button
+                onClick={() => deleteConversation(conv.id)}
+                className="opacity-0 group-hover:opacity-100 p-1 text-nexus-text-muted hover:text-red-400 transition-opacity"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
           ))}
         </div>
       </div>
 
-      {/* Chat area */}
+      {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         {activeConv ? (
           <>
-            {/* Messages */}
-            <div className="flex-1 overflow-auto p-4 space-y-4">
-              {activeConv.messages.length === 0 && (
-                <div className="flex items-center justify-center h-full text-nexus-text-muted">
-                  Start a conversation
-                </div>
-              )}
-              {activeConv.messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-xl px-4 py-2 ${
-                      msg.role === "user"
-                        ? "bg-nexus-accent text-white"
-                        : "bg-nexus-surface border border-nexus-border"
-                    }`}
+            {/* Header bar */}
+            <div className="h-10 border-b border-nexus-border flex items-center px-3 gap-2 bg-nexus-surface">
+              <button
+                onClick={() => setShowModelSelector(!showModelSelector)}
+                className="flex items-center gap-1.5 text-xs text-nexus-text-muted hover:text-nexus-text transition-colors"
+              >
+                <span className="font-medium">{activeConv.provider.model}</span>
+                <ChevronDown size={12} />
+              </button>
+              <span className="text-nexus-border">|</span>
+              <span className="text-xs text-nexus-text-muted capitalize">
+                {activeConv.provider.type}
+              </span>
+              {isStreaming && (
+                <>
+                  <span className="text-nexus-border">|</span>
+                  <button
+                    onClick={stopStreaming}
+                    className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300"
                   >
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                    {msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {msg.toolCalls.map((tc) => (
-                          <div
-                            key={tc.id}
-                            className="text-xs bg-nexus-bg rounded px-2 py-1 text-nexus-text-muted"
-                          >
-                            Tool: {tc.name}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {streaming && (
-                <div className="flex justify-start">
-                  <div className="bg-nexus-surface border border-nexus-border rounded-xl px-4 py-2">
-                    <div className="flex gap-1">
-                      <span className="w-2 h-2 bg-nexus-accent rounded-full animate-bounce" />
-                      <span className="w-2 h-2 bg-nexus-accent rounded-full animate-bounce [animation-delay:0.1s]" />
-                      <span className="w-2 h-2 bg-nexus-accent rounded-full animate-bounce [animation-delay:0.2s]" />
-                    </div>
-                  </div>
-                </div>
+                    <Square size={10} /> Stop
+                  </button>
+                </>
               )}
-              <div ref={messagesEndRef} />
             </div>
 
+            {/* Model selector dropdown */}
+            {showModelSelector && (
+              <ModelSelector
+                current={activeConv.provider}
+                onChange={(p) => updateProvider(activeConv.id, p)}
+                onClose={() => setShowModelSelector(false)}
+              />
+            )}
+
+            {/* Messages */}
+            <MessageList
+              messages={activeConv.messages}
+              isStreaming={isStreaming}
+            />
+
             {/* Input */}
-            <div className="p-4 border-t border-nexus-border">
-              <div className="flex gap-2">
-                <textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-                  className="input resize-none"
-                  rows={2}
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim() || streaming}
-                  className="btn-primary self-end disabled:opacity-50"
-                >
-                  <Send size={16} />
-                </button>
-              </div>
-            </div>
+            <MessageInput
+              onSend={handleSend}
+              disabled={isStreaming}
+            />
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-nexus-text-muted">
+          <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <h2 className="text-xl font-semibold mb-2">Nexus Chat</h2>
-              <p className="text-sm">Create a new chat to get started</p>
+              <p className="text-sm text-nexus-text-muted mb-4">
+                Multi-model AI chat with MCP tool integration
+              </p>
+              <button onClick={handleNewChat} className="btn-primary">
+                Start a Chat
+              </button>
             </div>
           </div>
         )}

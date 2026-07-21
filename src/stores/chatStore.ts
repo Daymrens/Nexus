@@ -1,104 +1,254 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export interface Message {
+// ── Types ──
+
+export interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   timestamp: number;
-  toolCalls?: ToolCall[];
+  provider?: string;
+  model?: string;
+  toolCalls?: ToolCallInfo[];
+  toolCallId?: string;
 }
 
-export interface ToolCall {
+export interface ToolCallInfo {
   id: string;
   name: string;
-  args: Record<string, unknown>;
-  result?: unknown;
+  arguments: string;
+  result?: string;
+}
+
+export type ProviderType = "anthropic" | "openai" | "ollama";
+
+export interface ProviderConfig {
+  type: ProviderType;
+  apiKey: string;
+  model: string;
+  baseUrl?: string;
 }
 
 export interface Conversation {
   id: string;
   title: string;
-  model: string;
-  messages: Message[];
+  messages: ChatMessage[];
+  provider: ProviderConfig;
   createdAt: number;
+  updatedAt: number;
+  systemPrompt: string;
 }
 
 interface ChatState {
   conversations: Conversation[];
-  activeConversation: string | null;
-  streaming: boolean;
-  createConversation: (model: string) => string;
+  activeConversationId: string | null;
+  isStreaming: boolean;
+  streamingContent: string;
+
+  // Actions
+  createConversation: (provider: ProviderConfig) => string;
+  deleteConversation: (id: string) => void;
   setActiveConversation: (id: string) => void;
-  sendMessage: (content: string) => Promise<void>;
-  setStreaming: (streaming: boolean) => void;
+  updateConversationTitle: (id: string, title: string) => void;
+  updateSystemPrompt: (id: string, prompt: string) => void;
+  updateProvider: (id: string, provider: ProviderConfig) => void;
+  sendMessage: (conversationId: string, content: string) => Promise<void>;
+  stopStreaming: () => void;
 }
 
-let nextId = 1;
+let unlistenToken: UnlistenFn | null = null;
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
-  activeConversation: null,
-  streaming: false,
+  activeConversationId: null,
+  isStreaming: false,
+  streamingContent: "",
 
-  createConversation: (model) => {
-    const id = `conv-${nextId++}`;
+  createConversation: (provider) => {
+    const id = `conv-${Date.now()}`;
     const conv: Conversation = {
       id,
       title: "New Chat",
-      model,
       messages: [],
+      provider,
       createdAt: Date.now(),
+      updatedAt: Date.now(),
+      systemPrompt: "You are a helpful coding assistant.",
     };
     set((s) => ({
-      conversations: [...s.conversations, conv],
-      activeConversation: id,
+      conversations: [conv, ...s.conversations],
+      activeConversationId: id,
     }));
     return id;
   },
 
-  setActiveConversation: (id) => set({ activeConversation: id }),
+  deleteConversation: (id) =>
+    set((s) => {
+      const remaining = s.conversations.filter((c) => c.id !== id);
+      return {
+        conversations: remaining,
+        activeConversationId:
+          s.activeConversationId === id
+            ? remaining[0]?.id ?? null
+            : s.activeConversationId,
+      };
+    }),
 
-  sendMessage: async (content) => {
-    const { activeConversation, conversations } = get();
-    if (!activeConversation) return;
+  setActiveConversation: (id) => set({ activeConversationId: id }),
 
-    const conv = conversations.find((c) => c.id === activeConversation);
-    if (!conv) return;
+  updateConversationTitle: (id, title) =>
+    set((s) => ({
+      conversations: s.conversations.map((c) =>
+        c.id === id ? { ...c, title } : c
+      ),
+    })),
 
-    const userMsg: Message = {
+  updateSystemPrompt: (id, prompt) =>
+    set((s) => ({
+      conversations: s.conversations.map((c) =>
+        c.id === id ? { ...c, systemPrompt: prompt } : c
+      ),
+    })),
+
+  updateProvider: (id, provider) =>
+    set((s) => ({
+      conversations: s.conversations.map((c) =>
+        c.id === id ? { ...c, provider } : c
+      ),
+    })),
+
+  sendMessage: async (conversationId, content) => {
+    const state = get();
+    const conv = state.conversations.find((c) => c.id === conversationId);
+    if (!conv || state.isStreaming) return;
+
+    const userMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       role: "user",
       content,
       timestamp: Date.now(),
     };
 
+    const placeholderMsg: ChatMessage = {
+      id: `msg-${Date.now() + 1}`,
+      role: "assistant",
+      content: "",
+      timestamp: Date.now(),
+      provider: conv.provider.type,
+      model: conv.provider.model,
+    };
+
     set((s) => ({
+      isStreaming: true,
+      streamingContent: "",
       conversations: s.conversations.map((c) =>
-        c.id === activeConversation
-          ? { ...c, messages: [...c.messages, userMsg] }
+        c.id === conversationId
+          ? {
+              ...c,
+              messages: [...c.messages, userMsg, placeholderMsg],
+              updatedAt: Date.now(),
+              title:
+                c.messages.length === 0
+                  ? content.slice(0, 50) + (content.length > 50 ? "..." : "")
+                  : c.title,
+            }
           : c
       ),
     }));
 
-    // Placeholder — real implementation will call LLM providers
-    set({ streaming: true });
-    setTimeout(() => {
-      const assistantMsg: Message = {
-        id: `msg-${Date.now() + 1}`,
-        role: "assistant",
-        content: "Nexus chat is not yet connected to an AI provider. Configure a provider in Settings to start chatting.",
-        timestamp: Date.now(),
-      };
-      set((s) => ({
-        streaming: false,
-        conversations: s.conversations.map((c) =>
-          c.id === activeConversation
-            ? { ...c, messages: [...c.messages, assistantMsg] }
-            : c
-        ),
+    // Set up event listener for streaming tokens
+    if (unlistenToken) {
+      unlistenToken();
+      unlistenToken = null;
+    }
+
+    unlistenToken = await listen<{ event_type: string; content: string; done: boolean }>(
+      "chat://token",
+      (event) => {
+        const { content: token, done } = event.payload;
+        if (done) {
+          set({ isStreaming: false, streamingContent: "" });
+          if (unlistenToken) {
+            unlistenToken();
+            unlistenToken = null;
+          }
+          return;
+        }
+        set((s) => {
+          const newContent = s.streamingContent + token;
+          return {
+            streamingContent: newContent,
+            conversations: s.conversations.map((c) => {
+              if (c.id !== conversationId) return c;
+              const msgs = [...c.messages];
+              const last = msgs[msgs.length - 1];
+              if (last && last.role === "assistant") {
+                msgs[msgs.length - 1] = { ...last, content: newContent };
+              }
+              return { ...c, messages: msgs };
+            }),
+          };
+        });
+      }
+    );
+
+    // Build messages for the API
+    const apiMessages = conv.messages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
       }));
-    }, 500);
+
+    try {
+      await invoke("chat_send", {
+        request: {
+          provider: {
+            provider: conv.provider.type,
+            api_key: conv.provider.apiKey,
+            model: conv.provider.model,
+            base_url: conv.provider.baseUrl || null,
+          },
+          messages: apiMessages,
+          tools: [],
+          max_tokens: 4096,
+          system_prompt: conv.systemPrompt || null,
+        },
+        conversationId,
+      });
+    } catch (e) {
+      const errorMsg = String(e);
+      set((s) => ({
+        isStreaming: false,
+        streamingContent: "",
+        conversations: s.conversations.map((c) => {
+          if (c.id !== conversationId) return c;
+          const msgs = [...c.messages];
+          const lastIdx = msgs.length - 1;
+          if (lastIdx >= 0 && msgs[lastIdx].role === "assistant") {
+            msgs[lastIdx] = {
+              ...msgs[lastIdx],
+              content: `Error: ${errorMsg}`,
+            };
+          }
+          return { ...c, messages: msgs };
+        }),
+      }));
+    }
+
+    if (unlistenToken) {
+      unlistenToken();
+      unlistenToken = null;
+    }
   },
 
-  setStreaming: (streaming) => set({ streaming }),
+  stopStreaming: () => {
+    set({ isStreaming: false, streamingContent: "" });
+    if (unlistenToken) {
+      unlistenToken();
+      unlistenToken = null;
+    }
+  },
 }));
