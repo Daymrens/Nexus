@@ -22,6 +22,9 @@ export function StatusBar() {
         <span>Conversations: {conversations.length}</span>
       </div>
       <div className="flex items-center gap-4">
+        <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-nexus-bg border border-nexus-border">
+          Ctrl+Shift+P
+        </kbd>
         <span>Nexus v0.1.0</span>
       </div>
     </footer>

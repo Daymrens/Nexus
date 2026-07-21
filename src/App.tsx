@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { Sidebar } from "./components/layout/Sidebar";
 import { StatusBar } from "./components/layout/StatusBar";
+import { CommandPalette } from "./components/layout/CommandPalette";
 import { ChatView } from "./components/chat/ChatView";
 import { McpView } from "./components/mcp/McpView";
 import { EditorView } from "./components/editor/EditorView";
@@ -7,7 +9,8 @@ import { TerminalView } from "./components/terminal/TerminalView";
 import { AgentsView } from "./components/agents/AgentsView";
 import { MemoryView } from "./components/memory/MemoryView";
 import { PluginsView } from "./components/plugins/PluginsView";
-import { useAppStore } from "./stores/appStore";
+import { SettingsView } from "./components/settings/SettingsView";
+import { useAppStore, type View } from "./stores/appStore";
 
 const views: Record<string, React.FC> = {
   chat: ChatView,
@@ -17,12 +20,41 @@ const views: Record<string, React.FC> = {
   agents: AgentsView,
   memory: MemoryView,
   plugins: PluginsView,
-  settings: () => <div className="p-4 text-nexus-text-muted">Settings — coming soon</div>,
+  settings: SettingsView,
+};
+
+const VIEW_SHORTCUTS: Record<string, View> = {
+  "1": "chat",
+  "2": "editor",
+  "3": "terminal",
+  "4": "mcp",
+  "5": "agents",
+  "6": "memory",
+  "7": "plugins",
 };
 
 export default function App() {
   const currentView = useAppStore((s) => s.currentView);
+  const setView = useAppStore((s) => s.setView);
   const View = views[currentView] || views.chat;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+        const view = VIEW_SHORTCUTS[e.key];
+        if (view) {
+          e.preventDefault();
+          setView(view);
+        }
+        if (e.key === ",") {
+          e.preventDefault();
+          setView("settings");
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [setView]);
 
   return (
     <div className="flex h-screen bg-nexus-bg overflow-hidden">
@@ -33,6 +65,7 @@ export default function App() {
         </main>
         <StatusBar />
       </div>
+      <CommandPalette />
     </div>
   );
 }
