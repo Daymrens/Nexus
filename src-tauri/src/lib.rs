@@ -1194,6 +1194,7 @@ async fn plugin_update_config(id: String, config: HashMap<String, String>) -> Re
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(McpManager::new())
         .manage(TermManager::new())
         .manage(AgentManager::new())

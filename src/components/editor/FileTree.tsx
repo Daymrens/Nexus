@@ -6,6 +6,7 @@ import {
   FolderOpen,
   RefreshCw,
 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEditorStore, type FileEntry } from "../../stores/editorStore";
 
 export function FileTree() {
@@ -13,17 +14,14 @@ export function FileTree() {
     useEditorStore();
 
   const handleFolderPicker = async () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.setAttribute("webkitdirectory", "");
-    input.addEventListener("change", () => {
-      if (input.files && input.files.length > 0) {
-        const fullPath = input.files[0].webkitRelativePath;
-        const root = fullPath.split("/")[0];
-        setRootPath(root);
-      }
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Open Folder",
     });
-    input.click();
+    if (selected) {
+      setRootPath(selected as string);
+    }
   };
 
   return (
