@@ -11,6 +11,9 @@ import { MemoryView } from "./components/memory/MemoryView";
 import { PluginsView } from "./components/plugins/PluginsView";
 import { SettingsView } from "./components/settings/SettingsView";
 import { useAppStore, type View } from "./stores/appStore";
+import { useChatStore } from "./stores/chatStore";
+import { useMcpStore } from "./stores/mcpStore";
+import { useAgentStore } from "./stores/agentStore";
 
 const views: Record<string, React.FC> = {
   chat: ChatView,
@@ -37,6 +40,13 @@ export default function App() {
   const currentView = useAppStore((s) => s.currentView);
   const setView = useAppStore((s) => s.setView);
   const View = views[currentView] || views.chat;
+
+  // Load persisted data on startup
+  useEffect(() => {
+    useChatStore.getState().loadConversations();
+    useMcpStore.getState().loadServers();
+    useAgentStore.getState().loadConfigs();
+  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

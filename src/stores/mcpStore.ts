@@ -32,10 +32,48 @@ interface McpState {
     toolName: string,
     args: Record<string, unknown>
   ) => Promise<unknown>;
+  loadServers: () => Promise<void>;
+  saveServers: () => Promise<void>;
 }
 
-export const useMcpStore = create<McpState>((set) => ({
+export const useMcpStore = create<McpState>((set, get) => ({
   servers: [],
+
+  loadServers: async () => {
+    try {
+      const configs = (await invoke("mcp_load_config")) as Array<{
+        id: string;
+        name: string;
+        command: string[];
+        env: Record<string, string>;
+        transport: string;
+        url: string | null;
+      }>;
+      if (configs.length > 0) {
+        const servers: McpServer[] = configs.map((c) => ({
+          id: c.id,
+          name: c.name,
+          command: c.command,
+          env: c.env,
+          status: "stopped" as const,
+          tools: [],
+          transport: (c.transport as McpServer["transport"]) || "stdio",
+          url: c.url ?? undefined,
+        }));
+        set({ servers });
+      }
+    } catch (e) {
+      console.error("Failed to load MCP configs:", e);
+    }
+  },
+
+  saveServers: async () => {
+    try {
+      await invoke("mcp_save_config");
+    } catch (e) {
+      console.error("Failed to save MCP configs:", e);
+    }
+  },
 
   addServer: async (server) => {
     const id = `mcp-${Date.now()}`;
@@ -55,11 +93,13 @@ export const useMcpStore = create<McpState>((set) => ({
         url: server.url ?? null,
       },
     });
+    get().saveServers();
   },
 
   removeServer: async (id) => {
     await invoke("mcp_remove_server", { id });
     set((s) => ({ servers: s.servers.filter((srv) => srv.id !== id) }));
+    get().saveServers();
   },
 
   startServer: async (id) => {

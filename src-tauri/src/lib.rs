@@ -470,11 +470,14 @@ async fn chat_send(
     ai::stream_chat(request, app, conversation_id).await
 }
 
-// ── Terminal ──
+// ── Terminal (Real PTY) ──
+
+use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 
 struct TermSession {
-    child: Child,
-    stdin: Option<tokio::process::ChildStdin>,
+    writer: Box<dyn std::io::Write + Send>,
+    child: Option<Box<dyn portable_pty::Child + Send>>,
+    pair: portable_pty::PtyPair,
 }
 
 pub struct TermManager {
@@ -496,75 +499,80 @@ async fn term_spawn(
     app: tauri::AppHandle,
     state: tauri::State<'_, TermManager>,
 ) -> Result<(), String> {
+    let pty_system = NativePtySystem::default();
+
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("Failed to open PTY: {}", e))?;
+
     let shell = if cfg!(windows) {
         "powershell.exe"
     } else {
         "bash"
     };
-    let shell_args = if cfg!(windows) {
+    let shell_args: Vec<&str> = if cfg!(windows) {
         vec!["-NoLogo", "-NoProfile"]
     } else {
         vec![]
     };
 
-    let mut cmd = Command::new(shell);
-    cmd.args(&shell_args);
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-    cmd.stdin(std::process::Stdio::piped());
-
+    let mut cmd = CommandBuilder::new(shell);
+    for arg in &shell_args {
+        cmd.arg(arg);
+    }
     if let Some(ref dir) = cwd {
-        cmd.current_dir(dir);
+        cmd.cwd(dir);
     }
 
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn shell: {}", e))?;
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("Failed to spawn shell: {}", e))?;
 
-    let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
-    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("Failed to get PTY writer: {}", e))?;
 
     let mut sessions = state.sessions.lock().await;
     sessions.insert(
         id.clone(),
         TermSession {
-            child,
-            stdin: Some(stdin),
+            writer,
+            child: Some(child),
+            pair,
         },
     );
     drop(sessions);
 
-    // Stream stdout
-    let id_clone = id.clone();
-    let app_out = app.clone();
-    tokio::spawn(async move {
-        let mut reader = BufReader::new(stdout);
-        let mut buf = [0u8; 8192];
-        loop {
-            match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    let data = buf[..n].to_vec();
-                    let _ = app_out.emit(
-                        "term://output",
-                        serde_json::json!({ "id": id_clone, "data": data }),
-                    );
-                }
-                Err(_) => break,
-            }
-        }
-    });
+    // Read PTY output in background
+    let reader = {
+        let sessions = state.sessions.lock().await;
+        sessions
+            .get(&id)
+            .map(|s| s.pair.master.try_clone_reader())
+    };
 
-    // Stream stderr
+    let reader = reader
+        .ok_or("Failed to clone PTY reader")?
+        .map_err(|e| format!("Failed to clone PTY reader: {}", e))?;
+
     let id_clone = id.clone();
-    tokio::spawn(async move {
-        let mut reader = BufReader::new(stderr);
+    let app_clone = app.clone();
+    tokio::task::spawn_blocking(move || {
         let mut buf = [0u8; 8192];
+        let mut reader = reader;
         loop {
-            match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
+            match std::io::Read::read(&mut reader, &mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
                     let data = buf[..n].to_vec();
-                    let _ = app.emit(
+                    let _ = app_clone.emit(
                         "term://output",
                         serde_json::json!({ "id": id_clone, "data": data }),
                     );
@@ -587,12 +595,12 @@ async fn term_write(
     let session = sessions
         .get_mut(&id)
         .ok_or_else(|| format!("Terminal {} not found", id))?;
-    let stdin = session.stdin.as_mut().ok_or("Terminal stdin closed")?;
-    stdin
+    use std::io::Write;
+    session
+        .writer
         .write_all(data.as_bytes())
-        .await
         .map_err(|e| e.to_string())?;
-    stdin.flush().await.map_err(|e| e.to_string())?;
+    session.writer.flush().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -603,7 +611,9 @@ async fn term_kill(
 ) -> Result<(), String> {
     let mut sessions = state.sessions.lock().await;
     if let Some(mut session) = sessions.remove(&id) {
-        let _ = session.child.kill().await;
+        if let Some(mut child) = session.child.take() {
+            let _ = child.kill();
+        }
     }
     Ok(())
 }
@@ -1188,6 +1198,159 @@ async fn plugin_update_config(id: String, config: HashMap<String, String>) -> Re
     Ok(result)
 }
 
+// ── Persistence ──
+
+fn nexus_config_dir() -> std::path::PathBuf {
+    let dir = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join(".nexus");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
+// MCP persistence
+
+#[derive(Debug, Serialize, Deserialize)]
+struct McpPersistConfig {
+    pub servers: Vec<McpServerConfig>,
+}
+
+fn mcp_config_path() -> std::path::PathBuf {
+    nexus_config_dir().join("mcp.json")
+}
+
+#[tauri::command]
+async fn mcp_save_config(
+    state: tauri::State<'_, McpManager>,
+) -> Result<(), String> {
+    let servers = state.servers.lock().await;
+    let configs: Vec<McpServerConfig> = servers
+        .values()
+        .map(|s| s.config.clone())
+        .collect();
+    let persist = McpPersistConfig { servers: configs };
+    let json = serde_json::to_string_pretty(&persist).map_err(|e| e.to_string())?;
+    std::fs::write(mcp_config_path(), json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mcp_load_config(
+    state: tauri::State<'_, McpManager>,
+) -> Result<Vec<McpServerConfig>, String> {
+    let path = mcp_config_path();
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let persist: McpPersistConfig = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    let mut servers = state.servers.lock().await;
+    for config in &persist.servers {
+        if !servers.contains_key(&config.id) {
+            servers.insert(config.id.clone(), ManagedServer::new(config.clone()));
+        }
+    }
+    Ok(persist.servers)
+}
+
+// Chat persistence
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ChatPersistData {
+    pub conversations: Vec<serde_json::Value>,
+}
+
+fn chat_config_path() -> std::path::PathBuf {
+    nexus_config_dir().join("chats.json")
+}
+
+#[tauri::command]
+async fn chat_save_conversations(conversations: String) -> Result<(), String> {
+    let json_value: serde_json::Value = serde_json::from_str(&conversations).map_err(|e| e.to_string())?;
+    let persist = ChatPersistData {
+        conversations: json_value
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
+    };
+    let json = serde_json::to_string_pretty(&persist).map_err(|e| e.to_string())?;
+    std::fs::write(chat_config_path(), json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn chat_load_conversations() -> Result<String, String> {
+    let path = chat_config_path();
+    if !path.exists() {
+        return Ok("[]".to_string());
+    }
+    let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let persist: ChatPersistData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    serde_json::to_string(&persist.conversations).map_err(|e| e.to_string())
+}
+
+// Agent persistence
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AgentPersistConfig {
+    pub configs: Vec<AgentConfig>,
+}
+
+fn agent_config_path() -> std::path::PathBuf {
+    nexus_config_dir().join("agents.json")
+}
+
+#[tauri::command]
+async fn agent_save_configs(
+    state: tauri::State<'_, AgentManager>,
+) -> Result<(), String> {
+    let agents = state.agents.lock().await;
+    let configs: Vec<AgentConfig> = agents
+        .values()
+        .map(|a| a.config.clone())
+        .collect();
+    let persist = AgentPersistConfig { configs };
+    let json = serde_json::to_string_pretty(&persist).map_err(|e| e.to_string())?;
+    std::fs::write(agent_config_path(), json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn agent_load_configs() -> Result<Vec<AgentConfig>, String> {
+    let path = agent_config_path();
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let persist: AgentPersistConfig = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    Ok(persist.configs)
+}
+
+// ── Keyring (Secure API Key Storage) ──
+
+fn keyring_entry(service: &str, account: &str) -> keyring::Entry {
+    keyring::Entry::new(service, account).expect("Failed to create keyring entry")
+}
+
+#[tauri::command]
+async fn keyring_set_key(service: String, account: String, secret: String) -> Result<(), String> {
+    let entry = keyring_entry(&service, &account);
+    entry.set_password(&secret).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn keyring_get_key(service: String, account: String) -> Result<Option<String>, String> {
+    let entry = keyring_entry(&service, &account);
+    match entry.get_password() {
+        Ok(secret) => Ok(Some(secret)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+async fn keyring_delete_key(service: String, account: String) -> Result<(), String> {
+    let entry = keyring_entry(&service, &account);
+    entry.delete_credential().map_err(|e| e.to_string())
+}
+
 // ── App Setup ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1229,6 +1392,15 @@ pub fn run() {
             plugin_uninstall,
             plugin_toggle,
             plugin_update_config,
+            mcp_save_config,
+            mcp_load_config,
+            chat_save_conversations,
+            chat_load_conversations,
+            agent_save_configs,
+            agent_load_configs,
+            keyring_set_key,
+            keyring_get_key,
+            keyring_delete_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nexus");

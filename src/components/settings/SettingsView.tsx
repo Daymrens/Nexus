@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Key, Monitor, Palette, Info } from "lucide-react";
 
 type SettingsTab = "general" | "providers" | "appearance" | "about";
@@ -66,20 +67,106 @@ function GeneralSettings() {
 }
 
 function ProviderSettings() {
+  const [anthropicKey, setAnthropicKey] = useState("");
+  const [openaiKey, setOpenaiKey] = useState("");
+  const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    invoke("keyring_get_key", {
+      service: "nexus",
+      account: "anthropic",
+    })
+      .then((v: unknown) => {
+        if (v && typeof v === "object" && "Some" in v) {
+          setAnthropicKey((v as { Some: string }).Some);
+        }
+      })
+      .catch(() => {});
+    invoke("keyring_get_key", {
+      service: "nexus",
+      account: "openai",
+    })
+      .then((v: unknown) => {
+        if (v && typeof v === "object" && "Some" in v) {
+          setOpenaiKey((v as { Some: string }).Some);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    try {
+      if (anthropicKey) {
+        await invoke("keyring_set_key", {
+          service: "nexus",
+          account: "anthropic",
+          secret: anthropicKey,
+        });
+      } else {
+        await invoke("keyring_delete_key", {
+          service: "nexus",
+          account: "anthropic",
+        }).catch(() => {});
+      }
+      if (openaiKey) {
+        await invoke("keyring_set_key", {
+          service: "nexus",
+          account: "openai",
+          secret: openaiKey,
+        });
+      } else {
+        await invoke("keyring_delete_key", {
+          service: "nexus",
+          account: "openai",
+        }).catch(() => {});
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      console.error("Failed to save keys:", e);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-lg">
       <h2 className="text-sm font-semibold">AI Provider Settings</h2>
-      <SettingRow label="Anthropic API Key" description="Used for Claude models">
-        <input type="password" placeholder="sk-ant-..." className="input text-xs w-72" />
+      <SettingRow label="Anthropic API Key" description="Used for Claude models (stored in OS keychain)">
+        <input
+          type="password"
+          value={anthropicKey}
+          onChange={(e) => setAnthropicKey(e.target.value)}
+          placeholder="sk-ant-..."
+          className="input text-xs w-72"
+        />
       </SettingRow>
-      <SettingRow label="OpenAI API Key" description="Used for GPT models">
-        <input type="password" placeholder="sk-..." className="input text-xs w-72" />
+      <SettingRow label="OpenAI API Key" description="Used for GPT models (stored in OS keychain)">
+        <input
+          type="password"
+          value={openaiKey}
+          onChange={(e) => setOpenaiKey(e.target.value)}
+          placeholder="sk-..."
+          className="input text-xs w-72"
+        />
       </SettingRow>
       <SettingRow label="Ollama endpoint" description="Local Ollama server URL">
-        <input type="text" defaultValue="http://localhost:11434" className="input text-xs w-72" />
+        <input
+          type="text"
+          value={ollamaUrl}
+          onChange={(e) => setOllamaUrl(e.target.value)}
+          className="input text-xs w-72"
+        />
       </SettingRow>
+      <div className="flex items-center gap-3 pt-2">
+        <button onClick={handleSave} className="btn-primary text-xs">
+          Save Keys
+        </button>
+        {saved && (
+          <span className="text-[10px] text-green-400">Saved to keychain</span>
+        )}
+      </div>
       <p className="text-[10px] text-nexus-text-muted">
-        API keys are stored locally and never sent to third parties.
+        API keys are stored in the OS keychain and never sent to third parties.
       </p>
     </div>
   );

@@ -28,15 +28,33 @@ interface AgentState {
   killAgent: (id: string) => Promise<void>;
   selectAgent: (id: string | null) => void;
   setShowSpawnForm: (show: boolean) => void;
+  loadConfigs: () => Promise<void>;
+  saveConfigs: () => Promise<void>;
 }
 
 let unlistenLog: UnlistenFn | null = null;
 let unlistenStatus: UnlistenFn | null = null;
 
-export const useAgentStore = create<AgentState>((set) => ({
+export const useAgentStore = create<AgentState>((set, get) => ({
   agents: [],
   selectedAgentId: null,
   showSpawnForm: false,
+
+  loadConfigs: async () => {
+    try {
+      await invoke("agent_load_configs");
+    } catch (e) {
+      console.error("Failed to load agent configs:", e);
+    }
+  },
+
+  saveConfigs: async () => {
+    try {
+      await invoke("agent_save_configs");
+    } catch (e) {
+      console.error("Failed to save agent configs:", e);
+    }
+  },
 
   refreshAgents: async () => {
     const agents = (await invoke("agent_list")) as AgentInfo[];
@@ -105,6 +123,8 @@ export const useAgentStore = create<AgentState>((set) => ({
       ],
       showSpawnForm: false,
     }));
+
+    get().saveConfigs();
   },
 
   killAgent: async (id) => {
@@ -114,6 +134,7 @@ export const useAgentStore = create<AgentState>((set) => ({
       selectedAgentId:
         s.selectedAgentId === id ? null : s.selectedAgentId,
     }));
+    get().saveConfigs();
   },
 
   selectAgent: (id) => set({ selectedAgentId: id }),

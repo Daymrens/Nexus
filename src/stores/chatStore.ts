@@ -56,15 +56,39 @@ interface ChatState {
   updateProvider: (id: string, provider: ProviderConfig) => void;
   sendMessage: (conversationId: string, content: string) => Promise<void>;
   stopStreaming: () => void;
+  loadConversations: () => Promise<void>;
+  saveConversations: () => Promise<void>;
 }
 
 let unlistenToken: UnlistenFn | null = null;
+
+function persist(state: ChatState) {
+  invoke("chat_save_conversations", {
+    conversations: JSON.stringify(state.conversations),
+  }).catch((e) => console.error("Failed to save conversations:", e));
+}
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   activeConversationId: null,
   isStreaming: false,
   streamingContent: "",
+
+  loadConversations: async () => {
+    try {
+      const data = (await invoke("chat_load_conversations")) as string;
+      const conversations = JSON.parse(data) as Conversation[];
+      if (conversations.length > 0) {
+        set({ conversations, activeConversationId: conversations[0].id });
+      }
+    } catch (e) {
+      console.error("Failed to load conversations:", e);
+    }
+  },
+
+  saveConversations: async () => {
+    persist(get());
+  },
 
   createConversation: (provider) => {
     const id = `conv-${Date.now()}`;
@@ -77,47 +101,65 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updatedAt: Date.now(),
       systemPrompt: "You are a helpful coding assistant.",
     };
-    set((s) => ({
-      conversations: [conv, ...s.conversations],
-      activeConversationId: id,
-    }));
+    set((s) => {
+      const next = {
+        conversations: [conv, ...s.conversations],
+        activeConversationId: id,
+      };
+      persist({ ...s, ...next });
+      return next;
+    });
     return id;
   },
 
   deleteConversation: (id) =>
     set((s) => {
       const remaining = s.conversations.filter((c) => c.id !== id);
-      return {
+      const next = {
         conversations: remaining,
         activeConversationId:
           s.activeConversationId === id
             ? remaining[0]?.id ?? null
             : s.activeConversationId,
       };
+      persist({ ...s, ...next });
+      return next;
     }),
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
 
   updateConversationTitle: (id, title) =>
-    set((s) => ({
-      conversations: s.conversations.map((c) =>
-        c.id === id ? { ...c, title } : c
-      ),
-    })),
+    set((s) => {
+      const next = {
+        conversations: s.conversations.map((c) =>
+          c.id === id ? { ...c, title } : c
+        ),
+      };
+      persist({ ...s, ...next });
+      return next;
+    }),
 
   updateSystemPrompt: (id, prompt) =>
-    set((s) => ({
-      conversations: s.conversations.map((c) =>
-        c.id === id ? { ...c, systemPrompt: prompt } : c
-      ),
-    })),
+    set((s) => {
+      const next = {
+        conversations: s.conversations.map((c) =>
+          c.id === id ? { ...c, systemPrompt: prompt } : c
+        ),
+      };
+      persist({ ...s, ...next });
+      return next;
+    }),
 
   updateProvider: (id, provider) =>
-    set((s) => ({
-      conversations: s.conversations.map((c) =>
-        c.id === id ? { ...c, provider } : c
-      ),
-    })),
+    set((s) => {
+      const next = {
+        conversations: s.conversations.map((c) =>
+          c.id === id ? { ...c, provider } : c
+        ),
+      };
+      persist({ ...s, ...next });
+      return next;
+    }),
 
   sendMessage: async (conversationId, content) => {
     const state = get();
@@ -174,6 +216,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             unlistenToken();
             unlistenToken = null;
           }
+          // Persist after streaming completes
+          setTimeout(() => persist(get()), 100);
           return;
         }
         set((s) => {

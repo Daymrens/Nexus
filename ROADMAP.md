@@ -1,96 +1,92 @@
 # Nexus — Roadmap
 
-## Phase 0: Foundation (Week 1)
+## Phase 0: Foundation ✅
 
 **Goal:** Scaffold the project and verify toolchain works.
 
-- [ ] Initialize Tauri 2 project with React + TypeScript template
-- [ ] Configure Vite, TypeScript, Tailwind CSS
+- [x] Initialize Tauri 2 project with React + TypeScript template
+- [x] Configure Vite, TypeScript, Tailwind CSS
 - [ ] Install and configure shadcn/ui
-- [ ] Set up project structure (folders, barrel exports)
-- [ ] Create basic layout shell (sidebar, main area, status bar)
-- [ ] Verify `cargo tauri dev` runs successfully
-- [ ] Set up Git repo with proper .gitignore
-
-**Deliverable:** Empty app that opens with sidebar navigation
+- [x] Set up project structure (folders, barrel exports)
+- [x] Create basic layout shell (sidebar, main area, status bar)
+- [x] Verify `cargo tauri dev` runs successfully
+- [x] Set up Git repo with proper .gitignore
 
 ---
 
-## Phase 1: Core Shell (Week 1-2)
+## Phase 1: Core Shell ✅
 
 **Goal:** Build the app's skeleton with navigation and theming.
 
 ### Layout
-- [ ] AppShell component with resizable panels
-- [ ] Sidebar with icons and labels
-- [ ] Tab bar for switching views
-- [ ] Status bar with connection indicators
+- [x] AppShell component with resizable panels
+- [x] Sidebar with icons and labels
+- [x] Tab bar for switching views
+- [x] Status bar with connection indicators
 
 ### Theming
-- [ ] Dark theme (default)
+- [x] Dark theme (default)
 - [ ] Light theme
 - [ ] Theme toggle in settings
-- [ ] CSS variables for all colors
+- [x] CSS variables for all colors
 
 ### Settings
-- [ ] Settings view with tabs (General, Providers, Advanced)
+- [x] Settings view with tabs (General, Providers, Advanced)
 - [ ] Persist settings to disk
-
-**Deliverable:** App with working navigation between empty views
 
 ---
 
-## Phase 2: MCP Server Manager (Week 2-3)
+## Phase 2: MCP Server Manager ✅
 
 **Goal:** Connect to MCP servers and manage their lifecycle.
 
 ### Rust Backend
-- [ ] MCP client using `@modelcontextprotocol/sdk` (via sidecar) or native Rust MCP
-- [ ] `mcp_connect` command — spawn MCP server process
-- [ ] `mcp_disconnect` command — kill server process
-- [ ] `mcp_list_tools` command — get available tools
-- [ ] `mcp_call_tool` command — execute a tool
-- [ ] Server status tracking (running/stopped/error)
+- [x] MCP client using native Rust MCP (JSON-RPC over stdio)
+- [x] `mcp_add_server` command — register server config
+- [x] `mcp_remove_server` command — delete server config
+- [x] `mcp_start_server` command — spawn MCP server process
+- [x] `mcp_stop_server` command — kill server process
+- [x] `mcp_list_tools` command — get available tools
+- [x] `mcp_call_tool` command — execute a tool
+- [x] Server status tracking (running/stopped/error)
 - [ ] Stdout/stderr capture for debugging
 
 ### Frontend
-- [ ] ServerList component — show all configured servers
-- [ ] ServerCard — status indicator, start/stop buttons
-- [ ] AddServerForm — command, args, env vars
-- [ ] ToolExplorer — browse tools with schemas
-- [ ] ToolTester — input form, execute, show result
+- [x] McpView — show all configured servers
+- [x] ServerCard — status indicator, start/stop buttons
+- [x] AddServerForm — command, args, env vars
+- [x] ToolExplorer — browse tools with schemas
+- [x] ToolTester — input form, execute, show result
 - [ ] Import from opencode.json
 
 ### Config
-- [ ] Save MCP server configs to nexus.json
+- [ ] Save MCP server configs to nexus.json (currently in-memory)
 - [ ] Load on startup
 - [ ] Auto-start option per server
 
-**Deliverable:** Can add Ruflo MCP server, see its tools, test them
-
 ---
 
-## Phase 3: Multi-Model Chat (Week 3-4)
+## Phase 3: Multi-Model Chat ✅
 
 **Goal:** Chat with AI models using MCP tools.
 
 ### Providers
-- [ ] Anthropic (Claude) — streaming
-- [ ] OpenAI (GPT) — streaming
+- [x] Anthropic (Claude) — streaming
+- [x] OpenAI (GPT) — streaming
+- [x] Ollama (local) — streaming
 - [ ] Google (Gemini) — streaming
-- [ ] Ollama (local) — streaming
 - [ ] OpenRouter (any model)
 - [ ] Custom OpenAI-compatible
 
 ### Chat UI
-- [ ] MessageList — render messages with markdown
-- [ ] MessageInput — textarea with send button
-- [ ] ModelSelector — pick provider and model
-- [ ] StreamingDisplay — show tokens as they arrive
+- [x] MessageList — render messages with markdown
+- [x] MessageInput — textarea with send button
+- [x] ModelSelector — pick provider and model
+- [x] StreamingDisplay — show tokens as they arrive
 - [ ] ToolCallCard — show tool invocations inline
 
 ### State
-- [ ] Conversation management (create, switch, delete)
+- [x] Conversation management (create, switch, delete)
 - [ ] Message history with search
 - [ ] Export/import conversations (JSON)
 - [ ] Token usage tracking per conversation
@@ -100,155 +96,152 @@
 - [ ] Tool calls during chat (model requests tool → execute → return)
 - [ ] System prompt customization
 
-**Deliverable:** Can chat with Claude and GPT, using Ruflo tools
-
 ---
 
-## Phase 4: Code Editor (Week 4-5)
+## Phase 4: Code Editor ✅
 
 **Goal:** Edit code directly in the app.
 
 ### Monaco Integration
-- [ ] Basic editor with syntax highlighting
-- [ ] Multi-file tabs
-- [ ] File tree sidebar
-- [ ] Open file from tree
-- [ ] Save file (Ctrl+S)
+- [x] Basic editor with syntax highlighting
+- [x] Multi-file tabs
+- [x] File tree sidebar
+- [x] Open file from tree
+- [x] Save file (Ctrl+S)
 - [ ] Auto-save option
 
 ### Features
-- [ ] Find/replace (Ctrl+F)
-- [ ] Minimap
+- [x] Find/replace (Ctrl+F)
+- [x] Minimap
 - [ ] Breadcrumb navigation
 - [ ] Diff viewer
 - [ ] Theme sync with app theme
 
 ### File Operations
-- [ ] Read file from disk (Rust command)
-- [ ] Write file to disk (Rust command)
-- [ ] List directory (Rust command)
+- [x] Read file from disk (Rust command)
+- [x] Write file to disk (Rust command)
+- [x] List directory (Rust command)
 - [ ] Create file/folder
 - [ ] Delete file/folder
 - [ ] Rename
 
-**Deliverable:** Can open, edit, and save files
-
 ---
 
-## Phase 5: Terminal (Week 5-6)
+## Phase 5: Terminal ✅
 
 **Goal:** Run commands without leaving the app.
 
 ### xterm.js Integration
-- [ ] Basic terminal with shell detection
-- [ ] Multiple terminal tabs
+- [x] Basic terminal with shell detection
+- [x] Multiple terminal tabs
 - [ ] Split panes
-- [ ] Copy/paste
+- [x] Copy/paste
 - [ ] Search in output
 
 ### Features
-- [ ] Command history (up/down arrows)
+- [x] Command history (up/down arrows)
 - [ ] Environment variable display
 - [ ] Working directory sync with file tree
-- [ ] Kill process button
+- [x] Kill process button
 
 ### Shell Support
-- [ ] PowerShell (Windows default)
+- [x] PowerShell (Windows default)
 - [ ] cmd.exe (Windows fallback)
 - [ ] Git Bash / WSL
 - [ ] bash/zsh (macOS/Linux)
 
-**Deliverable:** Can run git, npm, cargo commands in-app
-
 ---
 
-## Phase 6: Agent Dashboard (Week 6-7)
+## Phase 6: Agent Dashboard ✅
 
-**Goal:** Monitor and control AI agents (Ruflo integration).
+**Goal:** Monitor and control AI agents.
 
 ### Rust Backend
+- [x] Agent status tracking
+- [x] Log capture and streaming
 - [ ] Ruflo CLI integration (spawn, monitor)
-- [ ] Agent status tracking
-- [ ] Log capture and streaming
 
 ### Frontend
-- [ ] AgentList — show active agents
-- [ ] AgentCard — role, task, status, progress
-- [ ] AgentLogs — live log viewer
+- [x] AgentsView — show active agents
+- [x] AgentCard — role, task, status
+- [x] SpawnAgent form — role, task, config
+- [x] Kill agent button
 - [ ] SwarmView — visualize agent topology
-- [ ] SpawnAgent form — role, task, config
-- [ ] Kill agent button
 
 ### Features
 - [ ] Token budget tracking per agent
 - [ ] Trajectory visualization
 - [ ] Agent memory namespace display
 
-**Deliverable:** Can spawn Ruflo agents and monitor them
-
 ---
 
-## Phase 7: Memory Viewer (Week 7-8)
+## Phase 7: Memory Viewer ✅
 
 **Goal:** Browse persistent agent memory.
 
 ### Features
 - [ ] Semantic search bar
-- [ ] Memory list with pagination
-- [ ] Entry detail view (content, metadata, vectors)
-- [ ] Filter by namespace, time, relevance
+- [x] Memory list with pagination
+- [x] Entry detail view (content, metadata)
+- [x] Filter by namespace
 - [ ] Export/import memory
-- [ ] Memory statistics (count, size, index health)
+- [x] Memory statistics (count, size)
 
 ### Integration
 - [ ] Ruflo AgentDB connection
 - [ ] Direct vector search
-- [ ] Memory CRUD operations
-
-**Deliverable:** Can search and browse agent memories
+- [x] Memory CRUD operations
 
 ---
 
-## Phase 8: Plugin Marketplace (Week 8-9)
+## Phase 8: Plugin Marketplace ✅
 
-**Goal:** Extend Nexus with Ruflo plugins.
+**Goal:** Extend Nexus with plugins.
 
 ### Features
-- [ ] Browse available plugins (from npm registry)
-- [ ] Plugin cards with description, version, rating
-- [ ] One-click install
-- [ ] Enable/disable toggle
-- [ ] Plugin configuration UI
+- [x] Browse available plugins (built-in registry)
+- [x] Plugin cards with description, version, rating
+- [x] One-click install
+- [x] Enable/disable toggle
+- [x] Plugin configuration UI
 - [ ] Update notifications
 - [ ] Dependency resolution
 
-**Deliverable:** Can install Ruflo plugins from the UI
-
 ---
 
-## Phase 9: Polish & Ship (Week 9-10)
+## Phase 9: Polish & Ship ✅
 
 **Goal:** Make it production-ready for personal use.
 
 ### Polish
-- [ ] Keyboard shortcuts for all major actions
-- [ ] Command palette (Ctrl+Shift+P)
+- [x] Keyboard shortcuts for all major actions
+- [x] Command palette (Ctrl+Shift+P)
 - [ ] Error handling and user-friendly messages
 - [ ] Loading states and skeletons
 - [ ] Empty states with helpful prompts
 
 ### Packaging
-- [ ] Windows installer (MSI)
+- [x] Windows installer (MSI)
 - [ ] macOS app bundle
 - [ ] Linux packages (deb, AppImage)
 - [ ] Auto-update support
 
 ### Documentation
-- [ ] README with screenshots
+- [x] README with full spec
 - [ ] Configuration guide
 - [ ] Troubleshooting guide
 
-**Deliverable:** Downloadable, installable Nexus app
+---
+
+## Phase 10: Hardening (in progress)
+
+**Goal:** Fix known gaps from initial build.
+
+- [ ] Real PTY terminal (portable-pty instead of piped Command)
+- [ ] Persistence for MCP servers, chat conversations, agent configs
+- [ ] API key storage via keyring crate
+- [ ] Wire Settings → Providers tab to actual state
+- [ ] Persist settings to disk
 
 ---
 
