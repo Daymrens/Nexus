@@ -608,6 +608,203 @@ async fn term_kill(
     Ok(())
 }
 
+// ── Agent Dashboard ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConfig {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+    pub task: String,
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInfo {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+    pub task: String,
+    pub status: String,
+    pub logs: Vec<String>,
+    pub pid: Option<u32>,
+}
+
+struct ManagedAgent {
+    config: AgentConfig,
+    child: Option<Child>,
+    logs: Vec<String>,
+}
+
+pub struct AgentManager {
+    agents: Arc<Mutex<HashMap<String, ManagedAgent>>>,
+}
+
+impl AgentManager {
+    fn new() -> Self {
+        Self {
+            agents: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+#[tauri::command]
+async fn agent_spawn(
+    config: AgentConfig,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AgentManager>,
+) -> Result<(), String> {
+    let program = config.command.first().ok_or("No command provided")?;
+    let args = &config.command[1..];
+
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.stdin(std::process::Stdio::piped());
+
+    for (key, value) in &config.env {
+        cmd.env(key, value);
+    }
+
+    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn agent: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+
+    let agent_id = config.id.clone();
+    let agents_arc = state.agents.clone();
+    {
+        let mut agents = agents_arc.lock().await;
+        agents.insert(
+            agent_id.clone(),
+            ManagedAgent {
+                config,
+                child: Some(child),
+                logs: Vec::new(),
+            },
+        );
+    }
+
+    // Stream stdout
+    let id_out = agent_id.clone();
+    let app_out = app.clone();
+    let agents_out = agents_arc.clone();
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout);
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let line = buf.trim_end().to_string();
+                    {
+                        let mut agents = agents_out.lock().await;
+                        if let Some(agent) = agents.get_mut(&id_out) {
+                            agent.logs.push(line.clone());
+                            if agent.logs.len() > 500 {
+                                agent.logs.drain(0..100);
+                            }
+                        }
+                    }
+                    let _ = app_out.emit(
+                        "agent://log",
+                        serde_json::json!({ "id": id_out, "line": line }),
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = app_out.emit(
+            "agent://status",
+            serde_json::json!({ "id": id_out, "status": "stopped" }),
+        );
+    });
+
+    // Stream stderr
+    let id_err = agent_id.clone();
+    let app_err = app.clone();
+    let agents_err = agents_arc.clone();
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let line = buf.trim_end().to_string();
+                    {
+                        let mut agents = agents_err.lock().await;
+                        if let Some(agent) = agents.get_mut(&id_err) {
+                            agent.logs.push(format!("[stderr] {}", line));
+                        }
+                    }
+                    let _ = app_err.emit(
+                        "agent://log",
+                        serde_json::json!({ "id": id_err, "line": format!("[stderr] {}", line) }),
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn agent_kill(
+    id: String,
+    state: tauri::State<'_, AgentManager>,
+) -> Result<(), String> {
+    let mut agents = state.agents.lock().await;
+    if let Some(mut agent) = agents.remove(&id) {
+        if let Some(mut child) = agent.child.take() {
+            let _ = child.kill().await;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn agent_list(
+    state: tauri::State<'_, AgentManager>,
+) -> Result<Vec<AgentInfo>, String> {
+    let agents = state.agents.lock().await;
+    Ok(agents
+        .iter()
+        .map(|(id, agent)| AgentInfo {
+            id: id.clone(),
+            name: agent.config.name.clone(),
+            role: agent.config.role.clone(),
+            task: agent.config.task.clone(),
+            status: if agent.child.is_some() {
+                "running".to_string()
+            } else {
+                "stopped".to_string()
+            },
+            logs: agent.logs.clone(),
+            pid: agent.child.as_ref().and_then(|c| c.id()),
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn agent_logs(
+    id: String,
+    state: tauri::State<'_, AgentManager>,
+) -> Result<Vec<String>, String> {
+    let agents = state.agents.lock().await;
+    let agent = agents
+        .get(&id)
+        .ok_or_else(|| format!("Agent {} not found", id))?;
+    Ok(agent.logs.clone())
+}
+
 // ── App Setup ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -616,6 +813,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(McpManager::new())
         .manage(TermManager::new())
+        .manage(AgentManager::new())
         .invoke_handler(tauri::generate_handler![
             mcp_add_server,
             mcp_remove_server,
@@ -631,6 +829,10 @@ pub fn run() {
             term_spawn,
             term_write,
             term_kill,
+            agent_spawn,
+            agent_kill,
+            agent_list,
+            agent_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nexus");
