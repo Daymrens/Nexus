@@ -805,6 +805,181 @@ async fn agent_logs(
     Ok(agent.logs.clone())
 }
 
+// ── Memory Viewer ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryEntry {
+    pub id: String,
+    pub namespace: String,
+    pub content: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryStats {
+    pub total_entries: usize,
+    pub namespaces: Vec<String>,
+    pub total_size_bytes: usize,
+}
+
+fn memory_path() -> std::path::PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("nexus_memory.json")
+}
+
+fn load_memory() -> Vec<MemoryEntry> {
+    let path = memory_path();
+    if !path.exists() {
+        return Vec::new();
+    }
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_memory(entries: &[MemoryEntry]) -> Result<(), String> {
+    let path = memory_path();
+    let json = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn memory_list(
+    namespace: Option<String>,
+    search: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<MemoryEntry>, String> {
+    let entries = load_memory();
+    let mut filtered: Vec<MemoryEntry> = entries
+        .into_iter()
+        .filter(|e| {
+            if let Some(ref ns) = namespace {
+                if &e.namespace != ns {
+                    return false;
+                }
+            }
+            if let Some(ref query) = search {
+                let q = query.to_lowercase();
+                if !e.content.to_lowercase().contains(&q)
+                    && !e.tags.iter().any(|t| t.to_lowercase().contains(&q))
+                    && !e.namespace.to_lowercase().contains(&q)
+                {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    filtered.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    let start = offset.unwrap_or(0);
+    let count = limit.unwrap_or(100);
+    filtered = filtered.into_iter().skip(start).take(count).collect();
+
+    Ok(filtered)
+}
+
+#[tauri::command]
+async fn memory_get(id: String) -> Result<MemoryEntry, String> {
+    let entries = load_memory();
+    entries
+        .into_iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| format!("Memory entry {} not found", id))
+}
+
+#[tauri::command]
+async fn memory_add(
+    namespace: String,
+    content: String,
+    tags: Vec<String>,
+    metadata: HashMap<String, String>,
+) -> Result<MemoryEntry, String> {
+    let mut entries = load_memory();
+    let now = chrono_free_now();
+    let entry = MemoryEntry {
+        id: format!("mem-{}", now),
+        namespace,
+        content,
+        tags,
+        metadata,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    entries.push(entry.clone());
+    save_memory(&entries)?;
+    Ok(entry)
+}
+
+#[tauri::command]
+async fn memory_update(
+    id: String,
+    content: Option<String>,
+    tags: Option<Vec<String>>,
+    metadata: Option<HashMap<String, String>>,
+) -> Result<MemoryEntry, String> {
+    let mut entries = load_memory();
+    let entry = entries
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or_else(|| format!("Memory entry {} not found", id))?;
+    if let Some(c) = content {
+        entry.content = c;
+    }
+    if let Some(t) = tags {
+        entry.tags = t;
+    }
+    if let Some(m) = metadata {
+        entry.metadata = m;
+    }
+    entry.updated_at = chrono_free_now();
+    let result = entry.clone();
+    save_memory(&entries)?;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn memory_delete(id: String) -> Result<(), String> {
+    let mut entries = load_memory();
+    entries.retain(|e| e.id != id);
+    save_memory(&entries)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn memory_stats() -> Result<MemoryStats, String> {
+    let entries = load_memory();
+    let namespaces: Vec<String> = entries
+        .iter()
+        .map(|e| e.namespace.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let total_size = entries.iter().map(|e| e.content.len()).sum();
+    Ok(MemoryStats {
+        total_entries: entries.len(),
+        namespaces,
+        total_size_bytes: total_size,
+    })
+}
+
+fn chrono_free_now() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        .to_string()
+}
+
 // ── App Setup ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -833,6 +1008,12 @@ pub fn run() {
             agent_kill,
             agent_list,
             agent_logs,
+            memory_list,
+            memory_get,
+            memory_add,
+            memory_update,
+            memory_delete,
+            memory_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nexus");
