@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #0f0f0f;
+    --bg-secondary: #1a1a1a;
+    --bg-tertiary: #252525;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --text-primary: #fafafa;
+    --text-secondary: #a1a1aa;
+    --border: #27272a;
+    --success: #22c55e;
+    --warning: #eab308;
+    --error: #ef4444;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg-tertiary) var(--bg-primary);
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--border);
+  }
+}
+
+@layer components {
+  .sidebar-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-nexus-text-muted
+           hover:bg-nexus-surface hover:text-nexus-text transition-colors cursor-pointer;
+  }
+
+  .sidebar-item.active {
+    @apply bg-nexus-accent/10 text-nexus-accent;
+  }
+
+  .panel {
+    @apply bg-nexus-surface border border-nexus-border rounded-lg;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-nexus-accent text-white rounded-lg text-sm font-medium
+           hover:bg-nexus-accent-hover transition-colors;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-nexus-surface border border-nexus-border text-nexus-text
+           rounded-lg text-sm font-medium hover:bg-nexus-bg transition-colors;
+  }
+
+  .input {
+    @apply w-full px-3 py-2 bg-nexus-bg border border-nexus-border rounded-lg
+           text-nexus-text text-sm placeholder:text-nexus-text-muted
+           focus:outline-none focus:border-nexus-accent transition-colors;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply badge bg-green-500/10 text-green-400;
+  }
+
+  .badge-warning {
+    @apply badge bg-yellow-500/10 text-yellow-400;
+  }
+
+  .badge-error {
+    @apply badge bg-red-500/10 text-red-400;
+  }
+}
